@@ -142,47 +142,24 @@ export default function HomePage() {
     }
   };
 
-  // ── Speech Engine: speak one word at a time ──
+  // ── Speech Engine ──
+  // Dual-mode: fluent (wordDelay=0) or word-by-word (wordDelay>0)
   const speakWordAtIndex = useCallback((globalIdx: number) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     if (!isPlayingRef.current) return;
 
     const allWords = wordsRef.current;
-    const word = allWords[globalIdx];
-    if (!word) return;
+    if (globalIdx >= allWords.length) return;
+
+    const currentSet = setsRef.current[currentSetIdxRef.current];
+    if (!currentSet) return;
 
     window.speechSynthesis.cancel();
 
-    // Update which word is currently being spoken
-    setSpeakingWordIdx(globalIdx);
-
-    const utterance = new SpeechSynthesisUtterance(word);
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-
-    utterance.onend = () => {
+    // ── Shared logic: called when the entire set has been spoken ──
+    const handleSetComplete = () => {
       if (!isPlayingRef.current) return;
 
-      const currentSet = setsRef.current[currentSetIdxRef.current];
-      if (!currentSet) return;
-
-      const nextWordIdx = globalIdx + 1;
-
-      // ── Still more words in the current set? ──
-      if (nextWordIdx < currentSet.end) {
-        const wdMs = wordDelayRef.current * 1000;
-        if (wdMs > 0) {
-          delayTimerRef.current = setTimeout(
-            () => speakWordAtIndex(nextWordIdx),
-            wdMs
-          );
-        } else {
-          speakWordAtIndex(nextWordIdx);
-        }
-        return;
-      }
-
-      // ── Set finished → repeat or advance ──
       const rc = repeatCountRef.current;
       const rep = currentRepeatRef.current;
       const sdMs = setDelayRef.current * 1000;
@@ -207,7 +184,8 @@ export default function HomePage() {
         // Still have repeats left → replay from set start
         currentRepeatRef.current = rep + 1;
         setCurrentRepeatDisplay(rep + 1);
-        scheduleNext(() => speakWordAtIndex(currentSet.start));
+        const set = setsRef.current[currentSetIdxRef.current];
+        scheduleNext(() => speakWordAtIndex(set.start));
       } else {
         // All repeats done → advance to next set
         const nextSetIdx = currentSetIdxRef.current + 1;
@@ -233,7 +211,48 @@ export default function HomePage() {
       }
     };
 
-    window.speechSynthesis.speak(utterance);
+    if (wordDelayRef.current === 0) {
+      // ── FLUENT MODE: speak remaining words in set as one natural utterance ──
+      const text = allWords.slice(globalIdx, currentSet.end).join(" ");
+      setSpeakingWordIdx(-1); // no per-word highlight; whole set highlights
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+
+      utterance.onend = () => handleSetComplete();
+      window.speechSynthesis.speak(utterance);
+    } else {
+      // ── WORD-BY-WORD MODE: speak a single word, then schedule next ──
+      const word = allWords[globalIdx];
+      if (!word) return;
+
+      setSpeakingWordIdx(globalIdx);
+
+      const utterance = new SpeechSynthesisUtterance(word);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+
+      utterance.onend = () => {
+        if (!isPlayingRef.current) return;
+
+        const nextWordIdx = globalIdx + 1;
+
+        if (nextWordIdx < currentSet.end) {
+          // More words in set → wait then speak next word
+          const wdMs = wordDelayRef.current * 1000;
+          delayTimerRef.current = setTimeout(
+            () => speakWordAtIndex(nextWordIdx),
+            wdMs
+          );
+        } else {
+          // Set complete
+          handleSetComplete();
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
   }, []);
 
   // ── Handlers ──
