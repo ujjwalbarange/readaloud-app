@@ -67,10 +67,14 @@ export default function PlaybackControls({
               Set {currentSetIndex + 1} of {totalSets}
             </span>
             <span className="w-1 h-1 rounded-full bg-text-muted" />
-            {repeatCount === 0 ? (
+            {repeatCount === -1 ? (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-400/90">
                 <Infinity className="w-3.5 h-3.5" />
                 Manual mode
+              </span>
+            ) : repeatCount === 0 ? (
+              <span className="text-xs font-medium text-sky-400/90">
+                Auto · No repeat
               </span>
             ) : (
               <span className="text-xs font-medium text-text-secondary">
@@ -124,7 +128,7 @@ export default function PlaybackControls({
               <div className="flex items-center gap-1 ml-auto sm:ml-0">
                 <button
                   id="repeat-count-dec"
-                  onClick={() => onRepeatCountChange(Math.max(0, repeatCount - 1))}
+                  onClick={() => onRepeatCountChange(Math.max(-1, repeatCount - 1))}
                   className="w-7 h-7 rounded-lg bg-card hover:bg-card-hover flex items-center justify-center
                     text-text-secondary hover:text-white transition-all duration-150 cursor-pointer"
                   aria-label="Decrease repeat count"
@@ -132,7 +136,7 @@ export default function PlaybackControls({
                   <Minus className="w-3.5 h-3.5" />
                 </button>
                 <span className="w-7 text-center text-sm font-bold text-white tabular-nums">
-                  {repeatCount === 0 ? (
+                  {repeatCount === -1 ? (
                     <Infinity className="w-4 h-4 mx-auto text-amber-400" />
                   ) : (
                     repeatCount

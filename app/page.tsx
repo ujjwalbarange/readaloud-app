@@ -172,22 +172,16 @@ export default function HomePage() {
         }
       };
 
-      if (rc === 0) {
-        // Rule A: Manual mode — stop and wait for "Next" click
+      if (rc === -1) {
+        // Manual mode — stop and wait for "Next" click
         isPlayingRef.current = false;
         setIsPlaying(false);
         setSpeakingWordIdx(-1);
         return;
       }
 
-      if (rep < rc) {
-        // Still have repeats left → replay from set start
-        currentRepeatRef.current = rep + 1;
-        setCurrentRepeatDisplay(rep + 1);
-        const set = setsRef.current[currentSetIdxRef.current];
-        scheduleNext(() => speakWordAtIndex(set.start));
-      } else {
-        // All repeats done → advance to next set
+      // Auto-advance helper (shared by rc===0 and rc>=1 after repeats done)
+      const advanceToNextSet = () => {
         const nextSetIdx = currentSetIdxRef.current + 1;
 
         if (nextSetIdx >= setsRef.current.length) {
@@ -208,6 +202,20 @@ export default function HomePage() {
         setCurrentRepeatDisplay(0);
         const nextSet = setsRef.current[nextSetIdx];
         scheduleNext(() => speakWordAtIndex(nextSet.start));
+      };
+
+      if (rc === 0) {
+        // No-repeat auto mode — speak once then advance immediately
+        advanceToNextSet();
+      } else if (rep < rc) {
+        // Still have repeats left → replay from set start
+        currentRepeatRef.current = rep + 1;
+        setCurrentRepeatDisplay(rep + 1);
+        const set = setsRef.current[currentSetIdxRef.current];
+        scheduleNext(() => speakWordAtIndex(set.start));
+      } else {
+        // All repeats done → advance to next set
+        advanceToNextSet();
       }
     };
 
