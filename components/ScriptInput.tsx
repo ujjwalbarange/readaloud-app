@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { FileText, Upload, Trash2 } from "lucide-react";
 
 interface ScriptInputProps {
-  onLoadScript: (words: string[]) => void;
+  onLoadScript: (text: string) => void;
   isLoaded: boolean;
   onClear: () => void;
 }
@@ -17,8 +17,7 @@ export default function ScriptInput({ onLoadScript, isLoaded, onClear }: ScriptI
 
   const handleLoad = () => {
     if (!text.trim()) return;
-    const words = text.trim().split(/\s+/).filter(Boolean);
-    onLoadScript(words);
+    onLoadScript(text.trim());
   };
 
   const handleClear = () => {

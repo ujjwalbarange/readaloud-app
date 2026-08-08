@@ -4,23 +4,24 @@ import React, { useEffect, useRef } from "react";
 
 interface TextDisplayProps {
   words: string[];
-  currentIndex: number;
-  wordsPerSet: number;
+  activeSetStart: number;
+  activeSetEnd: number;
+  speakingWordIdx: number;
   isPlaying: boolean;
   onWordClick: (index: number) => void;
 }
 
 export default function TextDisplay({
   words,
-  currentIndex,
-  wordsPerSet,
+  activeSetStart,
+  activeSetEnd,
+  speakingWordIdx,
   isPlaying,
   onWordClick,
 }: TextDisplayProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
 
-  // Auto-scroll the active word into view
+  // Auto-scroll the currently speaking word into view
   useEffect(() => {
     if (activeWordRef.current) {
       activeWordRef.current.scrollIntoView({
@@ -28,7 +29,7 @@ export default function TextDisplay({
         block: "center",
       });
     }
-  }, [currentIndex]);
+  }, [speakingWordIdx, activeSetStart]);
 
   if (words.length === 0) {
     return (
@@ -60,38 +61,43 @@ export default function TextDisplay({
     );
   }
 
-  const setStart = currentIndex;
-  const setEnd = Math.min(currentIndex + wordsPerSet, words.length);
-
   return (
     <div
-      ref={containerRef}
       className="flex-1 py-8 px-2 sm:px-4 overflow-y-auto"
-      style={{ paddingBottom: "200px" }}
+      style={{ paddingBottom: "220px" }}
     >
       <div className="max-w-3xl mx-auto">
         <div className="flex flex-wrap gap-x-[0.35em] gap-y-2 leading-[1.8]">
           {words.map((word, i) => {
-            const isActive = i >= setStart && i < setEnd;
-            const isPast = i < setStart;
+            const isSpeaking = speakingWordIdx === i;
+            const isInActiveSet = i >= activeSetStart && i < activeSetEnd;
+            const isPast = i < activeSetStart;
+
+            // Determine ref target: attach to the speaking word, or the set start
+            const isRefTarget = isSpeaking || (speakingWordIdx === -1 && i === activeSetStart);
+
+            let colorClass: string;
+            if (isSpeaking) {
+              colorClass = "text-brand scale-[1.08] animate-pulse-glow";
+            } else if (isInActiveSet) {
+              colorClass = "text-brand/70 scale-[1.02]";
+            } else if (isPast) {
+              colorClass = "text-text-muted/30 hover:text-text-muted/60";
+            } else {
+              colorClass = "text-text-muted/50 hover:text-text-secondary/70";
+            }
 
             return (
               <span
                 key={i}
-                ref={i === setStart ? activeWordRef : undefined}
+                ref={isRefTarget ? activeWordRef : undefined}
                 onClick={() => onWordClick(i)}
                 className={`
                   inline-block cursor-pointer select-none
                   text-2xl sm:text-3xl lg:text-4xl font-medium
                   rounded-lg px-1.5 py-0.5
                   transition-all duration-300 ease-out
-                  ${
-                    isActive
-                      ? "text-brand scale-[1.05] animate-pulse-glow"
-                      : isPast
-                      ? "text-text-muted/40 hover:text-text-muted/70"
-                      : "text-text-muted/50 hover:text-text-secondary/70"
-                  }
+                  ${colorClass}
                   hover:bg-white/[0.03]
                 `}
                 role="button"

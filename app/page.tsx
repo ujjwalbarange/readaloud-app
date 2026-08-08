@@ -1,123 +1,235 @@
 "use client";
 
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Volume2 } from "lucide-react";
 import ScriptInput from "@/components/ScriptInput";
 import PlaybackControls from "@/components/PlaybackControls";
 import TextDisplay from "@/components/TextDisplay";
 
+// ── Types ──
+interface SetRange {
+  start: number;
+  end: number;
+}
+
+// ── Smart Parsing ──
+// Splits text into words and detects sentence/line boundaries.
+// Boundaries occur after words ending with . ! ? , ; : or at line breaks.
+function parseWordsAndBoundaries(rawText: string): {
+  words: string[];
+  boundaries: Set<number>;
+} {
+  const words: string[] = [];
+  const boundaries = new Set<number>();
+
+  const lines = rawText.split(/\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const lineWords = trimmed.split(/\s+/).filter(Boolean);
+    if (lineWords.length === 0) continue;
+
+    const lineStartIdx = words.length;
+    words.push(...lineWords);
+    const lineEndIdx = words.length - 1;
+
+    // End of every line is a natural boundary
+    boundaries.add(lineEndIdx);
+
+    // Words ending with sentence-ending punctuation are also boundaries
+    for (let i = lineStartIdx; i <= lineEndIdx; i++) {
+      if (/[.!?,;:]$/.test(words[i])) {
+        boundaries.add(i);
+      }
+    }
+  }
+
+  return { words, boundaries };
+}
+
+// Builds variable-size sets that respect sentence/line boundaries.
+// If a boundary falls inside a potential chunk, the set ends at that boundary.
+function computeSets(
+  wordCount: number,
+  maxWordsPerSet: number,
+  boundaries: Set<number>
+): SetRange[] {
+  const sets: SetRange[] = [];
+  let start = 0;
+
+  while (start < wordCount) {
+    let end = Math.min(start + maxWordsPerSet, wordCount);
+
+    // Check if a boundary exists before the full chunk endpoint
+    for (let i = start; i < end; i++) {
+      if (boundaries.has(i)) {
+        end = i + 1; // Include the boundary word, then break
+        break;
+      }
+    }
+
+    sets.push({ start, end });
+    start = end;
+  }
+
+  return sets;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Main Page Component
+// ═══════════════════════════════════════════════════════════════
 export default function HomePage() {
   // ── State ──
-  const [words, setWords] = useState<string[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [rawText, setRawText] = useState("");
+  const [currentSetIdx, setCurrentSetIdx] = useState(0);
+  const [speakingWordIdx, setSpeakingWordIdx] = useState(-1);
   const [wordsPerSet, setWordsPerSet] = useState(5);
   const [repeatCount, setRepeatCount] = useState(1);
-  const [delay, setDelay] = useState(0);
+  const [wordDelay, setWordDelay] = useState(0);
+  const [setDelay, setSetDelay] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [currentRepeatDisplay, setCurrentRepeatDisplay] = useState(0);
 
-  // ── Refs (stale-closure safe for Web Speech API callbacks) ──
-  const currentIndexRef = useRef(0);
-  const wordsPerSetRef = useRef(5);
+  // ── Derived Data (memoised) ──
+  const { words, boundaries } = useMemo(() => {
+    if (!rawText) return { words: [] as string[], boundaries: new Set<number>() };
+    return parseWordsAndBoundaries(rawText);
+  }, [rawText]);
+
+  const sets = useMemo(() => {
+    if (words.length === 0) return [] as SetRange[];
+    return computeSets(words.length, wordsPerSet, boundaries);
+  }, [words, wordsPerSet, boundaries]);
+
+  // ── Refs (stale-closure safe inside Web Speech API callbacks) ──
+  const currentSetIdxRef = useRef(0);
   const repeatCountRef = useRef(1);
+  const wordDelayRef = useRef(0);
+  const setDelayRef = useRef(0);
   const currentRepeatRef = useRef(0);
   const isPlayingRef = useRef(false);
-  const isPausedRef = useRef(false);
   const wordsRef = useRef<string[]>([]);
-  const delayRef = useRef(0);
+  const setsRef = useRef<SetRange[]>([]);
   const delayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Sync refs with state ──
-  useEffect(() => { wordsPerSetRef.current = wordsPerSet; }, [wordsPerSet]);
   useEffect(() => { repeatCountRef.current = repeatCount; }, [repeatCount]);
+  useEffect(() => { wordDelayRef.current = wordDelay; }, [wordDelay]);
+  useEffect(() => { setDelayRef.current = setDelay; }, [setDelay]);
   useEffect(() => { wordsRef.current = words; }, [words]);
-  useEffect(() => { delayRef.current = delay; }, [delay]);
 
-  // ── Computed ──
-  const totalSets = words.length > 0 ? Math.ceil(words.length / wordsPerSet) : 0;
-  const currentSetIndex = words.length > 0 ? Math.floor(currentIndex / wordsPerSet) : 0;
+  // When sets recompute (text or wordsPerSet changed), reset playback
+  useEffect(() => {
+    clearTimers();
+    window.speechSynthesis?.cancel();
+    setsRef.current = sets;
+    currentSetIdxRef.current = 0;
+    setCurrentSetIdx(0);
+    setSpeakingWordIdx(-1);
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    currentRepeatRef.current = 0;
+    setCurrentRepeatDisplay(0);
+  }, [sets]);
 
-  // ── Speech Engine ──
-  const speakCurrentSet = useCallback(() => {
+  // ── Helpers ──
+  const clearTimers = () => {
+    if (delayTimerRef.current) {
+      clearTimeout(delayTimerRef.current);
+      delayTimerRef.current = null;
+    }
+  };
+
+  // ── Speech Engine: speak one word at a time ──
+  const speakWordAtIndex = useCallback((globalIdx: number) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (!isPlayingRef.current) return;
 
-    // Always cancel before speaking to prevent queue build-up
+    const allWords = wordsRef.current;
+    const word = allWords[globalIdx];
+    if (!word) return;
+
     window.speechSynthesis.cancel();
 
-    const idx = currentIndexRef.current;
-    const wps = wordsPerSetRef.current;
-    const allWords = wordsRef.current;
+    // Update which word is currently being spoken
+    setSpeakingWordIdx(globalIdx);
 
-    if (idx >= allWords.length) {
-      // Reached the end of all words
-      isPlayingRef.current = false;
-      setIsPlaying(false);
-      setIsPaused(false);
-      isPausedRef.current = false;
-      return;
-    }
-
-    const setEnd = Math.min(idx + wps, allWords.length);
-    const textToSpeak = allWords.slice(idx, setEnd).join(" ");
-
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    const utterance = new SpeechSynthesisUtterance(word);
     utterance.rate = 0.9;
     utterance.pitch = 1;
 
     utterance.onend = () => {
-      // Guard: if playback was stopped while speaking, don't continue
       if (!isPlayingRef.current) return;
 
-      const rc = repeatCountRef.current;
-      const currentRep = currentRepeatRef.current;
-      const delayMs = delayRef.current * 1000;
+      const currentSet = setsRef.current[currentSetIdxRef.current];
+      if (!currentSet) return;
 
-      // Helper to run the next speech action after the configured delay
+      const nextWordIdx = globalIdx + 1;
+
+      // ── Still more words in the current set? ──
+      if (nextWordIdx < currentSet.end) {
+        const wdMs = wordDelayRef.current * 1000;
+        if (wdMs > 0) {
+          delayTimerRef.current = setTimeout(
+            () => speakWordAtIndex(nextWordIdx),
+            wdMs
+          );
+        } else {
+          speakWordAtIndex(nextWordIdx);
+        }
+        return;
+      }
+
+      // ── Set finished → repeat or advance ──
+      const rc = repeatCountRef.current;
+      const rep = currentRepeatRef.current;
+      const sdMs = setDelayRef.current * 1000;
+
       const scheduleNext = (action: () => void) => {
-        if (delayMs > 0) {
-          delayTimerRef.current = setTimeout(action, delayMs);
+        if (sdMs > 0) {
+          delayTimerRef.current = setTimeout(action, sdMs);
         } else {
           action();
         }
       };
 
       if (rc === 0) {
-        // ── Rule A: Manual mode ──
-        // Spoke once, now stop and wait for manual "Next"
+        // Rule A: Manual mode — stop and wait for "Next" click
         isPlayingRef.current = false;
         setIsPlaying(false);
-        setIsPaused(false);
-        isPausedRef.current = false;
+        setSpeakingWordIdx(-1);
         return;
       }
 
-      // ── Rule B: Auto-repeat mode ──
-      if (currentRep < rc) {
-        // Still have repeats left
-        currentRepeatRef.current = currentRep + 1;
-        setCurrentRepeatDisplay(currentRep + 1);
-        scheduleNext(() => speakCurrentSet());
+      if (rep < rc) {
+        // Still have repeats left → replay from set start
+        currentRepeatRef.current = rep + 1;
+        setCurrentRepeatDisplay(rep + 1);
+        scheduleNext(() => speakWordAtIndex(currentSet.start));
       } else {
         // All repeats done → advance to next set
-        const nextIndex = currentIndexRef.current + wordsPerSetRef.current;
+        const nextSetIdx = currentSetIdxRef.current + 1;
 
-        if (nextIndex >= wordsRef.current.length) {
-          // Reached the very end
+        if (nextSetIdx >= setsRef.current.length) {
+          // Reached the end of all text
           isPlayingRef.current = false;
           setIsPlaying(false);
-          setIsPaused(false);
-          isPausedRef.current = false;
-          setCurrentIndex(0);
-          currentIndexRef.current = 0;
+          currentSetIdxRef.current = 0;
+          setCurrentSetIdx(0);
+          setSpeakingWordIdx(-1);
+          currentRepeatRef.current = 0;
+          setCurrentRepeatDisplay(0);
           return;
         }
 
-        currentIndexRef.current = nextIndex;
-        setCurrentIndex(nextIndex);
+        currentSetIdxRef.current = nextSetIdx;
+        setCurrentSetIdx(nextSetIdx);
         currentRepeatRef.current = 0;
         setCurrentRepeatDisplay(0);
-        scheduleNext(() => speakCurrentSet());
+        const nextSet = setsRef.current[nextSetIdx];
+        scheduleNext(() => speakWordAtIndex(nextSet.start));
       }
     };
 
@@ -125,131 +237,119 @@ export default function HomePage() {
   }, []);
 
   // ── Handlers ──
-  const handleLoadScript = useCallback((loadedWords: string[]) => {
-    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
-    setWords(loadedWords);
-    wordsRef.current = loadedWords;
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
-    currentRepeatRef.current = 0;
-    setCurrentRepeatDisplay(0);
-    setIsPlaying(false);
-    isPlayingRef.current = false;
-    setIsPaused(false);
-    isPausedRef.current = false;
+  const handleLoadScript = useCallback((text: string) => {
+    clearTimers();
     window.speechSynthesis?.cancel();
+    setRawText(text);
+    // Position reset happens automatically via the `sets` useEffect
   }, []);
 
   const handleClear = useCallback(() => {
-    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
+    clearTimers();
     window.speechSynthesis?.cancel();
-    setWords([]);
-    wordsRef.current = [];
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
-    currentRepeatRef.current = 0;
-    setCurrentRepeatDisplay(0);
-    setIsPlaying(false);
-    isPlayingRef.current = false;
-    setIsPaused(false);
-    isPausedRef.current = false;
+    setRawText("");
   }, []);
 
   const handlePlay = useCallback(() => {
-    if (words.length === 0) return;
+    if (setsRef.current.length === 0) return;
 
-    if (isPausedRef.current) {
-      // Resume from pause
-      window.speechSynthesis?.resume();
-      setIsPaused(false);
-      isPausedRef.current = false;
-      setIsPlaying(true);
-      isPlayingRef.current = true;
-      return;
-    }
+    clearTimers();
+    window.speechSynthesis?.cancel();
 
-    // Fresh play
+    const currentSet = setsRef.current[currentSetIdxRef.current];
+    if (!currentSet) return;
+
     setIsPlaying(true);
     isPlayingRef.current = true;
-    setIsPaused(false);
-    isPausedRef.current = false;
     currentRepeatRef.current = 0;
     setCurrentRepeatDisplay(0);
-    speakCurrentSet();
-  }, [words.length, speakCurrentSet]);
-
-  const handlePause = useCallback(() => {
-    window.speechSynthesis?.pause();
-    setIsPaused(true);
-    isPausedRef.current = true;
-  }, []);
+    speakWordAtIndex(currentSet.start);
+  }, [speakWordAtIndex]);
 
   const handleStop = useCallback(() => {
-    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
+    clearTimers();
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
     isPlayingRef.current = false;
-    setIsPaused(false);
-    isPausedRef.current = false;
+    setSpeakingWordIdx(-1);
     currentRepeatRef.current = 0;
     setCurrentRepeatDisplay(0);
   }, []);
 
-  const handleNext = useCallback(() => {
-    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
+  const handleRepeat = useCallback(() => {
+    clearTimers();
     window.speechSynthesis?.cancel();
 
-    const nextIndex = currentIndexRef.current + wordsPerSetRef.current;
-    const allWords = wordsRef.current;
-
-    if (nextIndex >= allWords.length) {
-      // Wrap to beginning
-      currentIndexRef.current = 0;
-      setCurrentIndex(0);
-    } else {
-      currentIndexRef.current = nextIndex;
-      setCurrentIndex(nextIndex);
-    }
+    const currentSet = setsRef.current[currentSetIdxRef.current];
+    if (!currentSet) return;
 
     currentRepeatRef.current = 0;
     setCurrentRepeatDisplay(0);
-
-    // If was playing (including Rule A stopped state), start speaking the new set
-    // Always auto-play on Next click for better UX
     setIsPlaying(true);
     isPlayingRef.current = true;
-    setIsPaused(false);
-    isPausedRef.current = false;
-    speakCurrentSet();
-  }, [speakCurrentSet]);
+    speakWordAtIndex(currentSet.start);
+  }, [speakWordAtIndex]);
+
+  const handleNext = useCallback(() => {
+    clearTimers();
+    window.speechSynthesis?.cancel();
+
+    let nextSetIdx = currentSetIdxRef.current + 1;
+    if (nextSetIdx >= setsRef.current.length) {
+      nextSetIdx = 0; // wrap around
+    }
+
+    currentSetIdxRef.current = nextSetIdx;
+    setCurrentSetIdx(nextSetIdx);
+    currentRepeatRef.current = 0;
+    setCurrentRepeatDisplay(0);
+
+    const nextSet = setsRef.current[nextSetIdx];
+    if (!nextSet) return;
+
+    setIsPlaying(true);
+    isPlayingRef.current = true;
+    speakWordAtIndex(nextSet.start);
+  }, [speakWordAtIndex]);
 
   const handleWordClick = useCallback(
-    (index: number) => {
-      if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
+    (clickedWordIdx: number) => {
+      clearTimers();
       window.speechSynthesis?.cancel();
 
-      currentIndexRef.current = index;
-      setCurrentIndex(index);
+      // Find which set contains the clicked word
+      const setIdx = setsRef.current.findIndex(
+        (s) => clickedWordIdx >= s.start && clickedWordIdx < s.end
+      );
+      if (setIdx === -1) return;
+
+      currentSetIdxRef.current = setIdx;
+      setCurrentSetIdx(setIdx);
       currentRepeatRef.current = 0;
       setCurrentRepeatDisplay(0);
 
       setIsPlaying(true);
       isPlayingRef.current = true;
-      setIsPaused(false);
-      isPausedRef.current = false;
-      speakCurrentSet();
+      speakWordAtIndex(clickedWordIdx);
     },
-    [speakCurrentSet]
+    [speakWordAtIndex]
   );
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+      clearTimers();
       window.speechSynthesis?.cancel();
     };
   }, []);
 
+  // ── Computed for display ──
+  const totalSets = sets.length;
+  const activeSet = sets[currentSetIdx];
+
+  // ═══════════════════════════════════════════════════════════════
+  // Render
+  // ═══════════════════════════════════════════════════════════════
   return (
     <div className="flex flex-col min-h-screen">
       {/* ── Header ── */}
@@ -274,30 +374,16 @@ export default function HomePage() {
             <div
               className={`
                 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium
-                ${
-                  isPlaying && !isPaused
-                    ? "bg-brand/10 text-brand"
-                    : isPaused
-                    ? "bg-amber-500/10 text-amber-400"
-                    : "bg-surface text-text-secondary"
-                }
+                ${isPlaying ? "bg-brand/10 text-brand" : "bg-surface text-text-secondary"}
                 transition-all duration-300
               `}
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isPlaying && !isPaused
-                    ? "bg-brand animate-pulse"
-                    : isPaused
-                    ? "bg-amber-400"
-                    : "bg-text-muted"
+                  isPlaying ? "bg-brand animate-pulse" : "bg-text-muted"
                 }`}
               />
-              {isPlaying && !isPaused
-                ? "Speaking"
-                : isPaused
-                ? "Paused"
-                : "Ready"}
+              {isPlaying ? "Speaking" : "Ready"}
             </div>
           )}
         </div>
@@ -319,7 +405,7 @@ export default function HomePage() {
           <div className="flex items-center gap-4 px-2 mb-2">
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border-subtle to-transparent" />
             <span className="text-[11px] font-medium text-text-muted tracking-widest uppercase">
-              {words.length} words loaded
+              {words.length} words · {totalSets} sets
             </span>
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border-subtle to-transparent" />
           </div>
@@ -328,8 +414,9 @@ export default function HomePage() {
         {/* Text Display */}
         <TextDisplay
           words={words}
-          currentIndex={currentIndex}
-          wordsPerSet={wordsPerSet}
+          activeSetStart={activeSet?.start ?? 0}
+          activeSetEnd={activeSet?.end ?? 0}
+          speakingWordIdx={speakingWordIdx}
           isPlaying={isPlaying}
           onWordClick={handleWordClick}
         />
@@ -340,17 +427,18 @@ export default function HomePage() {
         <PlaybackControls
           wordsPerSet={wordsPerSet}
           repeatCount={repeatCount}
-          delay={delay}
+          wordDelay={wordDelay}
+          setDelay={setDelay}
           onWordsPerSetChange={setWordsPerSet}
           onRepeatCountChange={setRepeatCount}
-          onDelayChange={setDelay}
+          onWordDelayChange={setWordDelay}
+          onSetDelayChange={setSetDelay}
           isPlaying={isPlaying}
-          isPaused={isPaused}
           onPlay={handlePlay}
-          onPause={handlePause}
           onStop={handleStop}
+          onRepeat={handleRepeat}
           onNext={handleNext}
-          currentSetIndex={currentSetIndex}
+          currentSetIndex={currentSetIdx}
           totalSets={totalSets}
           currentRepeat={currentRepeatDisplay}
           hasWords={words.length > 0}
