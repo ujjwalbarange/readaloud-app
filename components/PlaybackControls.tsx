@@ -11,13 +11,16 @@ import {
   Repeat,
   AlignLeft,
   Infinity,
+  Timer,
 } from "lucide-react";
 
 interface PlaybackControlsProps {
   wordsPerSet: number;
   repeatCount: number;
+  delay: number;
   onWordsPerSetChange: (val: number) => void;
   onRepeatCountChange: (val: number) => void;
+  onDelayChange: (val: number) => void;
   isPlaying: boolean;
   isPaused: boolean;
   onPlay: () => void;
@@ -33,8 +36,10 @@ interface PlaybackControlsProps {
 export default function PlaybackControls({
   wordsPerSet,
   repeatCount,
+  delay,
   onWordsPerSetChange,
   onRepeatCountChange,
+  onDelayChange,
   isPlaying,
   isPaused,
   onPlay,
@@ -133,6 +138,37 @@ export default function PlaybackControls({
                 className="w-7 h-7 rounded-lg bg-card hover:bg-card-hover flex items-center justify-center
                   text-text-secondary hover:text-white transition-all duration-150 cursor-pointer"
                 aria-label="Increase repeat count"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* ── Counter: Delay ── */}
+          <div className="flex items-center gap-3 bg-surface/60 rounded-2xl px-4 py-2.5">
+            <Timer className="w-4 h-4 text-text-secondary shrink-0" />
+            <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
+              Delay
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                id="delay-dec"
+                onClick={() => onDelayChange(Math.max(0, +(delay - 0.5).toFixed(1)))}
+                className="w-7 h-7 rounded-lg bg-card hover:bg-card-hover flex items-center justify-center
+                  text-text-secondary hover:text-white transition-all duration-150 cursor-pointer"
+                aria-label="Decrease delay"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="w-10 text-center text-sm font-bold text-white tabular-nums">
+                {delay.toFixed(1)}s
+              </span>
+              <button
+                id="delay-inc"
+                onClick={() => onDelayChange(+(delay + 0.5).toFixed(1))}
+                className="w-7 h-7 rounded-lg bg-card hover:bg-card-hover flex items-center justify-center
+                  text-text-secondary hover:text-white transition-all duration-150 cursor-pointer"
+                aria-label="Increase delay"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>

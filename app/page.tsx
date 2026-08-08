@@ -12,6 +12,7 @@ export default function HomePage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [wordsPerSet, setWordsPerSet] = useState(5);
   const [repeatCount, setRepeatCount] = useState(1);
+  const [delay, setDelay] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [currentRepeatDisplay, setCurrentRepeatDisplay] = useState(0);
@@ -24,11 +25,14 @@ export default function HomePage() {
   const isPlayingRef = useRef(false);
   const isPausedRef = useRef(false);
   const wordsRef = useRef<string[]>([]);
+  const delayRef = useRef(0);
+  const delayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Sync refs with state ──
   useEffect(() => { wordsPerSetRef.current = wordsPerSet; }, [wordsPerSet]);
   useEffect(() => { repeatCountRef.current = repeatCount; }, [repeatCount]);
   useEffect(() => { wordsRef.current = words; }, [words]);
+  useEffect(() => { delayRef.current = delay; }, [delay]);
 
   // ── Computed ──
   const totalSets = words.length > 0 ? Math.ceil(words.length / wordsPerSet) : 0;
@@ -67,6 +71,16 @@ export default function HomePage() {
 
       const rc = repeatCountRef.current;
       const currentRep = currentRepeatRef.current;
+      const delayMs = delayRef.current * 1000;
+
+      // Helper to run the next speech action after the configured delay
+      const scheduleNext = (action: () => void) => {
+        if (delayMs > 0) {
+          delayTimerRef.current = setTimeout(action, delayMs);
+        } else {
+          action();
+        }
+      };
 
       if (rc === 0) {
         // ── Rule A: Manual mode ──
@@ -83,7 +97,7 @@ export default function HomePage() {
         // Still have repeats left
         currentRepeatRef.current = currentRep + 1;
         setCurrentRepeatDisplay(currentRep + 1);
-        speakCurrentSet();
+        scheduleNext(() => speakCurrentSet());
       } else {
         // All repeats done → advance to next set
         const nextIndex = currentIndexRef.current + wordsPerSetRef.current;
@@ -103,7 +117,7 @@ export default function HomePage() {
         setCurrentIndex(nextIndex);
         currentRepeatRef.current = 0;
         setCurrentRepeatDisplay(0);
-        speakCurrentSet();
+        scheduleNext(() => speakCurrentSet());
       }
     };
 
@@ -112,6 +126,7 @@ export default function HomePage() {
 
   // ── Handlers ──
   const handleLoadScript = useCallback((loadedWords: string[]) => {
+    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
     setWords(loadedWords);
     wordsRef.current = loadedWords;
     setCurrentIndex(0);
@@ -126,6 +141,7 @@ export default function HomePage() {
   }, []);
 
   const handleClear = useCallback(() => {
+    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
     window.speechSynthesis?.cancel();
     setWords([]);
     wordsRef.current = [];
@@ -169,6 +185,7 @@ export default function HomePage() {
   }, []);
 
   const handleStop = useCallback(() => {
+    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
     isPlayingRef.current = false;
@@ -179,6 +196,7 @@ export default function HomePage() {
   }, []);
 
   const handleNext = useCallback(() => {
+    if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
     window.speechSynthesis?.cancel();
 
     const nextIndex = currentIndexRef.current + wordsPerSetRef.current;
@@ -207,6 +225,7 @@ export default function HomePage() {
 
   const handleWordClick = useCallback(
     (index: number) => {
+      if (delayTimerRef.current) { clearTimeout(delayTimerRef.current); delayTimerRef.current = null; }
       window.speechSynthesis?.cancel();
 
       currentIndexRef.current = index;
@@ -226,6 +245,7 @@ export default function HomePage() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -320,8 +340,10 @@ export default function HomePage() {
         <PlaybackControls
           wordsPerSet={wordsPerSet}
           repeatCount={repeatCount}
+          delay={delay}
           onWordsPerSetChange={setWordsPerSet}
           onRepeatCountChange={setRepeatCount}
+          onDelayChange={setDelay}
           isPlaying={isPlaying}
           isPaused={isPaused}
           onPlay={handlePlay}
