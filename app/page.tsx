@@ -97,11 +97,12 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentRepeatDisplay, setCurrentRepeatDisplay] = useState(0);
 
-  // ── Derived Data (memoised) ──
-  const { words, boundaries } = useMemo(() => {
-    if (!rawText) return { words: [] as string[], boundaries: new Set<number>() };
+// ── Derived Data (memoised) ──
+const { words, boundaries, paragraphs } = useMemo(() => {
+    if (!rawText) return { words: [] as string[], boundaries: new Set<number>(), paragraphs: [] as string[][] };
     return parseWordsAndBoundaries(rawText);
   }, [rawText]);
+
 
   const sets = useMemo(() => {
     if (words.length === 0) return [] as SetRange[];
