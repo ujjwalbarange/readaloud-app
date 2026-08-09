@@ -13,41 +13,46 @@ interface SetRange {
 }
 
 // ── Smart Parsing ──
-// Splits text into words and detects sentence/line boundaries.
-// Boundaries occur after words ending with . ! ? , ; : or at line breaks.
 function parseWordsAndBoundaries(rawText: string): {
   words: string[];
   boundaries: Set<number>;
+  paragraphs: string[][];
 } {
   const words: string[] = [];
   const boundaries = new Set<number>();
+  const paragraphs: string[][] = [];
 
-  const lines = rawText.split(/\n/);
+  // Split raw text by one or more newlines to identify paragraphs
+  const blocks = rawText.split(/\n+/);
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  for (const block of blocks) {
+    const trimmed = block.trim();
     if (!trimmed) continue;
 
-    const lineWords = trimmed.split(/\s+/).filter(Boolean);
-    if (lineWords.length === 0) continue;
+    const blockWords = trimmed.split(/\s+/).filter(Boolean);
+    if (blockWords.length === 0) continue;
 
-    const lineStartIdx = words.length;
-    words.push(...lineWords);
-    const lineEndIdx = words.length - 1;
+    // Store the words as a distinct paragraph array
+    paragraphs.push(blockWords);
 
-    // End of every line is a natural boundary
-    boundaries.add(lineEndIdx);
+    const blockStartIdx = words.length;
+    words.push(...blockWords);
+    const blockEndIdx = words.length - 1;
+
+    // The end of every paragraph block acts as a natural boundary
+    boundaries.add(blockEndIdx);
 
     // Words ending with sentence-ending punctuation are also boundaries
-    for (let i = lineStartIdx; i <= lineEndIdx; i++) {
+    for (let i = blockStartIdx; i <= blockEndIdx; i++) {
       if (/[.!?,;:]$/.test(words[i])) {
         boundaries.add(i);
       }
     }
   }
 
-  return { words, boundaries };
+  return { words, boundaries, paragraphs };
 }
+
 
 // Builds variable-size sets that respect sentence/line boundaries.
 // If a boundary falls inside a potential chunk, the set ends at that boundary.
