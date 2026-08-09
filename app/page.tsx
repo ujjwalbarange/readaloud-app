@@ -447,12 +447,14 @@ const { words, boundaries, paragraphs } = useMemo(() => {
         {/* Text Display */}
         <TextDisplay
           words={words}
+          paragraphs={paragraphs} // <-- Add this
           activeSetStart={activeSet?.start ?? 0}
           activeSetEnd={activeSet?.end ?? 0}
           speakingWordIdx={speakingWordIdx}
           isPlaying={isPlaying}
           onWordClick={handleWordClick}
         />
+
       </main>
 
       {/* ── Sticky Playback Controls ── */}
