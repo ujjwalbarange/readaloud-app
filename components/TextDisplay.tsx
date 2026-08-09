@@ -4,6 +4,7 @@ import React, { useEffect, useRef } from "react";
 
 interface TextDisplayProps {
   words: string[];
+  paragraphs: string[][];
   activeSetStart: number;
   activeSetEnd: number;
   speakingWordIdx: number;
@@ -13,6 +14,7 @@ interface TextDisplayProps {
 
 export default function TextDisplay({
   words,
+  paragraphs,
   activeSetStart,
   activeSetEnd,
   speakingWordIdx,
@@ -61,60 +63,68 @@ export default function TextDisplay({
     );
   }
 
+  // Initialize a tracker to maintain the flat index across all paragraphs
+  let globalIdx = 0;
+
   return (
     <div
       className="flex-1 py-8 px-2 sm:px-4 overflow-y-auto"
       style={{ paddingBottom: "220px" }}
     >
       <div className="max-w-3xl mx-auto">
-        <div className="flex flex-wrap gap-x-[0.35em] gap-y-2 leading-[1.8]">
-          {words.map((word, i) => {
-            const isSpeaking = speakingWordIdx === i;
-            const isInActiveSet = i >= activeSetStart && i < activeSetEnd;
-            const isPast = i < activeSetStart;
+        {paragraphs.map((para, pIdx) => (
+          <div key={pIdx} className="mb-6 flex flex-wrap gap-x-[0.35em] gap-y-2 leading-[1.8]">
+            {para.map((word, wIdx) => {
+              // Capture the current global index and increment for the next word
+              const i = globalIdx++;
+              
+              const isSpeaking = speakingWordIdx === i;
+              const isInActiveSet = i >= activeSetStart && i < activeSetEnd;
+              const isPast = i < activeSetStart;
 
-            // Determine ref target: attach to the speaking word, or the set start
-            const isRefTarget = isSpeaking || (speakingWordIdx === -1 && i === activeSetStart);
+              // Determine ref target: attach to the speaking word, or the set start
+              const isRefTarget = isSpeaking || (speakingWordIdx === -1 && i === activeSetStart);
 
-            let colorClass: string;
-            if (isSpeaking) {
-              colorClass = "text-brand scale-[1.08] animate-pulse-glow";
-            } else if (isInActiveSet) {
-              colorClass = "text-brand/70 scale-[1.02]";
-            } else if (isPast) {
-              colorClass = "text-text-muted/30 hover:text-text-muted/60";
-            } else {
-              colorClass = "text-text-muted/50 hover:text-text-secondary/70";
-            }
+              let colorClass: string;
+              if (isSpeaking) {
+                colorClass = "text-brand scale-[1.08] animate-pulse-glow";
+              } else if (isInActiveSet) {
+                colorClass = "text-brand/70 scale-[1.02]";
+              } else if (isPast) {
+                colorClass = "text-text-muted/30 hover:text-text-muted/60";
+              } else {
+                colorClass = "text-text-muted/50 hover:text-text-secondary/70";
+              }
 
-            return (
-              <span
-                key={i}
-                ref={isRefTarget ? activeWordRef : undefined}
-                onClick={() => onWordClick(i)}
-                className={`
-                  inline-block cursor-pointer select-none
-                  text-2xl sm:text-3xl lg:text-4xl font-medium
-                  rounded-lg px-1.5 py-0.5
-                  transition-all duration-300 ease-out
-                  ${colorClass}
-                  hover:bg-white/[0.03]
-                `}
-                role="button"
-                tabIndex={0}
-                aria-label={`Word: ${word}. Click to start reading from here.`}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onWordClick(i);
-                  }
-                }}
-              >
-                {word}
-              </span>
-            );
-          })}
-        </div>
+              return (
+                <span
+                  key={i}
+                  ref={isRefTarget ? activeWordRef : undefined}
+                  onClick={() => onWordClick(i)}
+                  className={`
+                    inline-block cursor-pointer select-none
+                    text-2xl sm:text-3xl lg:text-4xl font-medium
+                    rounded-lg px-1.5 py-0.5
+                    transition-all duration-300 ease-out
+                    ${colorClass}
+                    hover:bg-white/[0.03]
+                  `}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Word: ${word}. Click to start reading from here.`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onWordClick(i);
+                    }
+                  }}
+                >
+                  {word}
+                </span>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
